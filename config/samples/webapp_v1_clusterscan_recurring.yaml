@@ -1,0 +1,24 @@
+apiVersion: webapp.kzzy/v1
+kind: ClusterScan
+metadata:
+  labels:
+    app.kubernetes.io/name: kubernetescontroller
+    app.kubernetes.io/managed-by: kustomize
+  name: clusterscan-sample-run-recurring
+spec:
+  schedule: "*/1 * * * *"
+  startingDeadlineSeconds: 60
+  concurrencyPolicy: Forbid
+  jobRunFrequency: Recurring
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: hello
+            image: busybox
+            args:
+            - /bin/sh
+            - -c
+            - date; echo Hello from the Kubernetes cluster
+          restartPolicy: OnFailure

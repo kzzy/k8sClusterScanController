@@ -5,6 +5,24 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - kzzy
+  resources:
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - kzzy
+  resources:
+  - jobs/status
+  verbs:
+  - get
+- apiGroups:
   - webapp.kzzy
   resources:
   - clusterscans
