@@ -3505,9 +3505,6 @@ spec:
                 type: integer
               suspend:
                 type: boolean
-              ttlSecondsAfterFinished:
-                format: int32
-                type: integer
             required:
             - jobRunFrequency
             - jobTemplate

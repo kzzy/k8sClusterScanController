@@ -42,9 +42,6 @@ type ClusterScanSpec struct {
 	// Supports Two Values : "Once" | "Recurring"
 	JobRunFrequency JobRunFrequency `json:"jobRunFrequency"`
 
-	// Duration after job completion before it is deleted
-	TTLSecondsAfterFinished *int32 `json:"ttlSecondsAfterFinished,omitempty"`
-
 	//+kubebuilder:validation:Minimum=0
 
 	// The number of successful finished jobs to retain.

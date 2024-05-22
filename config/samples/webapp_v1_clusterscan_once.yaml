@@ -10,7 +10,6 @@ spec:
   startingDeadlineSeconds: 60
   concurrencyPolicy: Forbid
   jobRunFrequency: Once
-  ttlSecondsAfterFinished: 5
   jobTemplate:
     spec:
       template:
@@ -22,4 +21,4 @@ spec:
             - /bin/sh
             - -c
             - date; echo Hello from the Kubernetes cluster
-          restartPolicy: OnFailure
+          restartPolicy: Never

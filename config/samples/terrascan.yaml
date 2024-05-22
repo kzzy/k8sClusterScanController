@@ -1,0 +1,26 @@
+apiVersion: webapp.kzzy/v1
+kind: ClusterScan
+metadata:
+  labels:
+    app.kubernetes.io/name: kubernetescontroller
+    app.kubernetes.io/managed-by: kustomize
+  name: terrascan
+spec:
+  schedule: "*/1 * * * *"
+  startingDeadlineSeconds: 60
+  concurrencyPolicy: Forbid
+  jobRunFrequency: Once
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: terrascan
+            image: tenable/terrascan:latest
+            args:
+            - echo Launched Terrascan container
+            - echo Executing Terrascan Scan
+            - terrascan scan
+            - exit
+
+          restartPolicy: Never

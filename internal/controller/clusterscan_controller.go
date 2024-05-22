@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	webappv1 "kzzy/kubernetescontroller/api/v1"
@@ -66,7 +67,7 @@ type Clock interface {
 Now, we get to the heart of the controller -- the reconciler logic.
 */
 var (
-	scheduledTimeAnnotation = "batch.tutorial.kubebuilder.io/scheduled-at"
+	scheduledTimeAnnotation = "kzzy.kubernetescontroller/scheduled-at"
 )
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -102,7 +103,7 @@ func (r *ClusterScanReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	}
 
 	/*
-		### 2: List all active jobs, and update the status
+		List all active jobs, and update the status
 
 		To fully update our status, we'll need to list all child jobs in this namespace that belong to this CronJob.
 		Similarly to Get, we can use the List method to list the child jobs.  Notice that we use variadic options to
@@ -282,11 +283,12 @@ func (r *ClusterScanReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		}
 	}
 
-	/* ### 4: Check if we're suspended
+	/*
+		Check if we're suspended
 
-	If this object is suspended, we don't want to run any jobs, so we'll stop now.
-	This is useful if something's broken with the job we're running and we want to
-	pause runs to investigate or putz with the cluster, without deleting the object.
+		If this object is suspended, we don't want to run any jobs, so we'll stop now.
+		This is useful if something's broken with the job we're running and we want to
+		pause runs to investigate or putz with the cluster, without deleting the object.
 	*/
 
 	if cronJob.Spec.Suspend != nil && *cronJob.Spec.Suspend {
@@ -294,14 +296,8 @@ func (r *ClusterScanReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
-	// Check if a run has been completed already, for single execute cases
-	if cronJob.Spec.JobRunFrequency == webappv1.RunJobOnce && (len(successfulJobs)+len(failedJobs)) >= 1 {
-		log.V(1).Info("Job has completed, exiting due to Flag - JobRunFrequency set to Once")
-		return ctrl.Result{}, nil
-	}
-
 	/*
-		### 5: Get the next scheduled run
+		Get the next scheduled run
 
 		If we're not paused, we'll need to calculate the next scheduled run, and whether
 		or not we've got a run that we haven't processed yet.
@@ -382,6 +378,42 @@ func (r *ClusterScanReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, nil
 	}
 
+	// Finalizer for deletion clean up
+	finalizer := "kzzy.kubernetescontroller/finalizer"
+
+	//
+	if cronJob.ObjectMeta.DeletionTimestamp.IsZero() {
+		// Adds finalizer if there is not one yet
+		if !controllerutil.ContainsFinalizer(&cronJob, finalizer) {
+			controllerutil.AddFinalizer(&cronJob, finalizer)
+
+			if err := r.Update(ctx, &cronJob); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	} else {
+		// Removes finalizer and concludes cleanup
+		if controllerutil.ContainsFinalizer(&cronJob, finalizer) {
+			controllerutil.RemoveFinalizer(&cronJob, finalizer)
+			if err := r.deleteExternalResources(&cronJob); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			if err := r.Update(ctx, &cronJob); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Conditional check to see if an one-off job has been executed already
+	if cronJob.Spec.JobRunFrequency == webappv1.RunJobOnce {
+		if (len(activeJobs) + len(successfulJobs) + len(failedJobs)) >= 1 {
+			log.V(1).Info("Job is currently active or completed, not requeuing due to JobRunFrequency = Once")
+			return ctrl.Result{}, nil
+		}
+	}
+
 	/*
 		We'll prep our eventual request to requeue until the next job, and then figure
 		out if we actually need to run.
@@ -390,7 +422,7 @@ func (r *ClusterScanReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	log = log.WithValues("now", r.Now(), "next run", nextRun)
 
 	/*
-		### 6: Run a new job if it's on schedule, not past the deadline, and not blocked by our concurrency policy
+		Run a new job if it's on schedule, not past the deadline, and not blocked by our concurrency policy
 
 		If we've missed a run, and we're still within the deadline to start it, we'll need to run a job.
 	*/
@@ -418,18 +450,21 @@ func (r *ClusterScanReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	*/
 	// figure out how to run this job -- concurrency policy might forbid us from running
 	// multiple at the same time...
-	if cronJob.Spec.ConcurrencyPolicy == webappv1.ForbidConcurrent && len(activeJobs) > 0 {
-		log.V(1).Info("concurrency policy blocks concurrent runs, skipping", "num active", len(activeJobs))
-		return scheduledResult, nil
-	}
+	// Only consider concurrency policy for recurring jobs
+	if cronJob.Spec.JobRunFrequency == webappv1.RunJobRecurring {
+		if cronJob.Spec.ConcurrencyPolicy == webappv1.ForbidConcurrent && len(activeJobs) > 0 {
+			log.V(1).Info("concurrency policy blocks concurrent runs, skipping", "num active", len(activeJobs))
+			return scheduledResult, nil
+		}
 
-	// ...or instruct us to replace existing ones...
-	if cronJob.Spec.ConcurrencyPolicy == webappv1.ReplaceConcurrent {
-		for _, activeJob := range activeJobs {
-			// we don't care if the job was already deleted
-			if err := r.Delete(ctx, activeJob, client.PropagationPolicy(metav1.DeletePropagationBackground)); client.IgnoreNotFound(err) != nil {
-				log.Error(err, "unable to delete active job", "job", activeJob)
-				return ctrl.Result{}, err
+		// ...or instruct us to replace existing ones...
+		if cronJob.Spec.ConcurrencyPolicy == webappv1.ReplaceConcurrent {
+			for _, activeJob := range activeJobs {
+				// we don't care if the job was already deleted
+				if err := r.Delete(ctx, activeJob, client.PropagationPolicy(metav1.DeletePropagationBackground)); client.IgnoreNotFound(err) != nil {
+					log.Error(err, "unable to delete active job", "job", activeJob)
+					return ctrl.Result{}, err
+				}
 			}
 		}
 	}
@@ -494,7 +529,7 @@ func (r *ClusterScanReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	log.V(1).Info("created Job for CronJob run", "job", job)
 
 	/*
-		### 7: Requeue when we either see a running job or it's time for the next scheduled run
+		Requeue when we either see a running job or it's time for the next scheduled run
 
 		Finally, we'll return the result that we prepped above, that says we want to requeue
 		when our next run would need to occur.  This is taken as a maximum deadline -- if something
@@ -504,6 +539,11 @@ func (r *ClusterScanReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	// we'll requeue once we see the running job, and update our status
 
 	return scheduledResult, nil
+}
+
+func (r *ClusterScanReconciler) deleteExternalResources(cronJob *webappv1.ClusterScan) error {
+	// Deletes remaining external resources with the job before deletion of the job
+	return nil
 }
 
 var (

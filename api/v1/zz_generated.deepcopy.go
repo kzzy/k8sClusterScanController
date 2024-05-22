@@ -88,11 +88,6 @@ func (in *ClusterScanList) DeepCopyObject() runtime.Object {
 func (in *ClusterScanSpec) DeepCopyInto(out *ClusterScanSpec) {
 	*out = *in
 	in.JobTemplate.DeepCopyInto(&out.JobTemplate)
-	if in.TTLSecondsAfterFinished != nil {
-		in, out := &in.TTLSecondsAfterFinished, &out.TTLSecondsAfterFinished
-		*out = new(int32)
-		**out = **in
-	}
 	if in.SuccessfulJobsHistoryLimit != nil {
 		in, out := &in.SuccessfulJobsHistoryLimit, &out.SuccessfulJobsHistoryLimit
 		*out = new(int32)

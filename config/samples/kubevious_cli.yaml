@@ -1,0 +1,25 @@
+apiVersion: webapp.kzzy/v1
+kind: ClusterScan
+metadata:
+  labels:
+    app.kubernetes.io/name: kubernetescontroller
+    app.kubernetes.io/managed-by: kustomize
+  name: kubevious-cli
+spec:
+  schedule: "*/1 * * * *"
+  startingDeadlineSeconds: 60
+  concurrencyPolicy: Forbid
+  jobRunFrequency: Once
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: kubevious-cli
+            image: kubevious/cli:latest
+            args:
+            - date;
+            - echo Running Kubevious-cli containers
+            - pwd
+
+          restartPolicy: Never
